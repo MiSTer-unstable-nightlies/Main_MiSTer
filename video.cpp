@@ -58,6 +58,7 @@
 #define VRR_NONE     0x00
 #define VRR_FREESYNC 0x01
 #define VRR_VESA     0x02
+#define VRR_MISTER   0x03
 
 static int     use_vrr = 0;
 static int     use_freesync_spd = 0;
@@ -90,10 +91,11 @@ struct vrr_cap_t
 	char description[128];
 };
 
-static vrr_cap_t vrr_modes[3] = {
+static vrr_cap_t vrr_modes[] = {
 	{0, 0, 0, 0, "None"},
 	{0, 0, 0, 0, "AMD Freesync"},
 	{0, 0, 0, 0, "Vesa Forum VRR"},
+	{0, 0, 0, 0, "MiSTer VRR"},
 };
 
 static uint8_t last_vrr_mode = 0xFF;
@@ -1976,7 +1978,6 @@ static void set_vrr_mode()
 {
 	PROFILE_FUNCTION();
 
-	use_vrr = 0;
 	float vrateh = 100000000;
 
 	if (cfg.vrr_mode == 0)
@@ -1988,6 +1989,7 @@ static void set_vrr_mode()
 		}
 		last_vrr_mode = 0;
 		use_freesync_spd = 0;
+		use_vrr = 0;
 		return;
 	}
 
@@ -1996,16 +1998,17 @@ static void set_vrr_mode()
 
 	if ((last_vrr_mode == cfg.vrr_mode) &&
 		(last_vrr_rate == vrateh) &&
-		(last_vrr_vfp == v_cur.param.vfp || cfg.vrr_mode != VRR_VESA)) return;
+		(last_vrr_vfp == v_cur.param.vfp || (cfg.vrr_mode != VRR_VESA && cfg.vrr_mode != VRR_MISTER))) return;
 
 	if (!is_edid_valid())
 	{
 		get_active_edid();
 	}
 
-	if (!is_edid_valid())
+	if (!is_edid_valid() && cfg.vrr_mode == 1)
 	{
 		printf("Set VRR: No valid edid, cannot set\n");
+		use_vrr = 0;
 		return;
 	}
 
@@ -2030,6 +2033,10 @@ static void set_vrr_mode()
 	{ //force Vesa Forum VRR
 		use_vrr = VRR_VESA;
 	}
+	else if (cfg.vrr_mode == 4)
+	{ //force MiSTer VRR
+		use_vrr = VRR_MISTER;
+	}
 	else
 	{
 		use_vrr = 0;
@@ -2041,8 +2048,11 @@ static void set_vrr_mode()
 	if (use_vrr == VRR_VESA && !vrateh) return;
 	if (use_vrr)
 	{
-		vrr_min_fr = cfg.vrr_min_framerate;
-		vrr_max_fr = cfg.vrr_max_framerate;
+		if (use_vrr != VRR_MISTER)
+		{
+			vrr_min_fr = cfg.vrr_min_framerate;
+			vrr_max_fr = cfg.vrr_max_framerate;
+		}
 
 		if (!vrr_min_fr) vrr_min_fr = vrr_modes[use_vrr].min_fr;
 		if (!vrr_max_fr) vrr_max_fr = vrr_modes[use_vrr].max_fr;
@@ -2132,7 +2142,7 @@ static void video_set_mode(vmode_custom_t *v, double Fpix)
 	}
 
 	if (Fpix) setPLL(Fpix, &v_cur);
-	if (use_vrr)
+	if (use_vrr && vrr_min_fr && vrr_max_fr)
 	{
 		printf("Requested variable refresh rate: min=%dHz, max=%dHz\n", vrr_min_fr, vrr_max_fr);
 		int horz = v_fix.param.hact + v_fix.param.hbp + v_fix.param.hfp + v_fix.param.hs;
@@ -2626,7 +2636,6 @@ static bool get_video_info(bool force, VideoInfo *video_info)
 	uint16_t res = spi_w(0);
 	if ((nres != res) || force)
 	{
-
 		res_changed = (nres != res);
 		nres = res;
 		if (res_changed) vi_seen = true;
@@ -3130,6 +3139,17 @@ void video_mode_adjust()
 			user_io_send_buttons(1);
 			force = true;
 		}
+		else if (use_vrr == VRR_MISTER)
+		{
+			int fr = 1000000000 / video_info.vtime;
+			int fr_min = (fr - 10) / 10;
+			int fr_max = (fr + 19) / 10;
+			vrr_modes[VRR_MISTER].min_fr = fr_min;
+			vrr_modes[VRR_MISTER].max_fr = fr_max;
+			video_set_mode(&v_def, 0);
+			user_io_send_buttons(1);
+			force = true;
+		}
 		else if (cfg_has_video_sections()) // if we have video sections but aren't updating the resolution for other reasons, then do it here
 		{
 			video_set_mode(&v_def, 0);
@@ -3564,6 +3584,9 @@ static Imlib_Image load_bg()
 	return NULL;
 }
 
+static Imlib_Image *bg = 0;
+static Imlib_Image menubg = 0;
+
 static int bg_has_picture = 0;
 extern uint8_t  _binary_logo_png_start[], _binary_logo_png_end[];
 void video_menu_bg(int n, int idle)
@@ -3613,14 +3636,13 @@ void video_menu_bg(int n, int idle)
 
 		menu_bgn = (menu_bgn == 1) ? 2 : 1;
 
-		static Imlib_Image menubg = 0;
 		static Imlib_Image bg1 = 0, bg2 = 0;
 		if (!bg1) bg1 = imlib_create_image_using_data(fb_width, fb_height, (uint32_t*)(fb_base + (FB_SIZE * 1)));
 		if (!bg1) printf("Warning: bg1 is 0\n");
 		if (!bg2) bg2 = imlib_create_image_using_data(fb_width, fb_height, (uint32_t*)(fb_base + (FB_SIZE * 2)));
 		if (!bg2) printf("Warning: bg2 is 0\n");
 
-		Imlib_Image *bg = (menu_bgn == 1) ? &bg1 : &bg2;
+		bg = (menu_bgn == 1) ? &bg1 : &bg2;
 		//printf("*bg = %p\n", *bg);
 
 		static Imlib_Image curtain = 0;
@@ -3772,6 +3794,25 @@ void video_menu_bg(int n, int idle)
 	}
 
 	video_fb_enable(0);
+}
+
+void dbg_draw_cursor(int x, int y)
+{
+	static int c = 0;
+	if (menubg)
+	{
+		imlib_context_set_image(*bg);
+		int src_w = imlib_image_get_width();
+		int src_h = imlib_image_get_height();
+
+		x = (((src_w - 20)*x) / 255) + 10;
+		y = (((src_h - 20)*y) / 255) + 10;
+
+		c = (c + 1) % 3;
+
+		imlib_context_set_color(c == 0 ? 255 : 0, c == 1 ? 255 : 0, c == 2 ? 255 : 0, 255);
+		imlib_image_fill_ellipse(x, y, 10, 10);
+	}
 }
 
 int video_bg_has_picture()
