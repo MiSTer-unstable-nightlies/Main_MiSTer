@@ -1151,11 +1151,8 @@ static void hdmi_packet_set_data(uint8_t mask, uint8_t offset, uint8_t *data, in
 		}
 		else
 		{
-			for (int i = 0; i < size; i++)
-			{
-				res = i2c_smbus_write_byte_data(fd, offset + i, data[i]);
-				if (res < 0) printf("i2c: SPD register write error (%02X %02x): %d\n", offset + i, data[i], res);
-			}
+			res = i2c_smbus_write_block_data(fd, offset, size, data);
+			if (res < 0) printf("i2c: SPD data write error: %d\n", res);
 
 			res = i2c_smbus_write_byte_data(fd, offset + 0x1F, 0x00);
 			if (res < 0) printf("i2c: Couldn't update packet change register (0x%02X, 0x00) %d\n", offset + 0x1F, res);
@@ -3009,7 +3006,7 @@ static void spd_config_update()
 {
 	if (use_freesync_spd) return;
 
-	if (cfg.direct_video)
+	if (cfg.direct_video && (cfg.spd_quirk < 3))
 	{
 		// Custom SPD IF for additional DV1 metadata
 		VideoInfo *vi = &current_video_info;
@@ -3020,7 +3017,7 @@ static void spd_config_update()
 			'D',
 			'V',
 			'1', // version
-			(uint8_t)((vi->interlaced ? 1 : 0) | (menu_present() ? 4 : 0) | (vi->rotated ? 8 : 0) | (arcade_get_direction() << 4)),
+			(uint8_t)((vi->interlaced ? 1 : 0) | ((menu_present() && (cfg.spd_quirk < 2)) ? 4 : 0) | (vi->rotated ? 8 : 0) | (arcade_get_direction() << 4)),
 			(uint8_t)(vi->pixrep ? vi->pixrep : (vi->ctime / vi->width)),
 			(uint8_t)vi->de_h,
 			(uint8_t)(vi->de_h >> 8),
@@ -3042,7 +3039,7 @@ static void spd_config_update()
 
 		hdmi_spd_config(data);
 	}
-	else
+	else if(!cfg.spd_quirk)
 	{
 		// Standard SPD IF
 		uint8_t data[31] = {
@@ -3069,26 +3066,27 @@ static void spd_config_update()
 
 #define fr_constrain(fr) ((cfg.refresh_min && fr < cfg.refresh_min) ? cfg.refresh_min : (cfg.refresh_max && fr > cfg.refresh_max) ? cfg.refresh_max : fr)
 
-void video_mode_adjust()
+void video_mode_adjust(bool force)
 {
-	static bool force = false;
+	static bool rep_force = false;
+	if (force) rep_force = true;
 
 	VideoInfo video_info;
 
-	const bool vid_changed = get_video_info(force, &video_info);
+	const bool vid_changed = get_video_info(rep_force, &video_info);
+	current_video_info = video_info;
 
-	if (vid_changed || force)
+	if (vid_changed || rep_force)
 	{
-		current_video_info = video_info;
 		show_video_info(&video_info, &v_cur);
 		set_yc_mode();
 		spd_config_update();
 	}
-	force = false;
+	rep_force = false;
 
 	static int menu = 0;
 	int menu_now = menu_present();
-	if(menu != menu_now) spd_config_update();
+	if(menu != menu_now && cfg.spd_quirk < 2) spd_config_update();
 	menu = menu_now;
 
 	if (vid_changed && !is_menu())
@@ -3139,7 +3137,7 @@ void video_mode_adjust()
 
 			video_set_mode(v, Fpix);
 			user_io_send_buttons(1);
-			force = true;
+			rep_force = true;
 		}
 		else if (use_vrr == VRR_MISTER)
 		{
@@ -3151,13 +3149,13 @@ void video_mode_adjust()
 			printf("*** video_mode_adjust: fr=%d.%d, fr_min=%d, fr_max=%d\n", fr / 10, fr % 10, vrr_modes[VRR_MISTER].min_fr, vrr_modes[VRR_MISTER].max_fr);
 			video_set_mode(&v_def, 0);
 			user_io_send_buttons(1);
-			force = true;
+			rep_force = true;
 		}
 		else if (cfg_has_video_sections()) // if we have video sections but aren't updating the resolution for other reasons, then do it here
 		{
 			video_set_mode(&v_def, 0);
 			user_io_send_buttons(1);
-			force = true;
+			rep_force = true;
 		}
 		else
 		{
@@ -3537,6 +3535,19 @@ static char *get_file_fromdir(const char* dir, int num, int *count)
 	return name;
 }
 
+static uint32_t get_random()
+{
+	uint32_t rnd;
+	int rndfd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+	if (rndfd >= 0)
+	{
+		read(rndfd, &rnd, sizeof(rnd));
+		close(rndfd);
+	}
+
+	return rnd;
+}
+
 static Imlib_Image load_bg()
 {
 	const char* fname = "menu.png";
@@ -3562,17 +3573,9 @@ static Imlib_Image load_bg()
 
 		if (PathIsDir(bgdir))
 		{
-			int rndfd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
-			if (rndfd >= 0)
-			{
-				uint32_t rnd;
-				read(rndfd, &rnd, sizeof(rnd));
-				close(rndfd);
-
-				int count = 0;
-				get_file_fromdir(bgdir, -1, &count);
-				if (count > 0) fname = get_file_fromdir(bgdir, rnd % count, &count);
-			}
+			int count = 0;
+			get_file_fromdir(bgdir, -1, &count);
+			if (count > 0) fname = get_file_fromdir(bgdir, get_random() % count, &count);
 		}
 	}
 
@@ -3659,7 +3662,7 @@ void video_menu_bg(int n, int idle)
 			int sz = fb_width * fb_height;
 			for (int i = 0; i < sz; i++)
 			{
-				*data++ = 0x9F000000;
+				*data++ = 0x63000000;
 			}
 		}
 
@@ -3773,17 +3776,46 @@ void video_menu_bg(int n, int idle)
 			}
 		}
 
+		if (logo && idle == 4)
+		{
+			imlib_context_set_image(logo);
+
+			int src_w = imlib_image_get_width();
+			int src_h = imlib_image_get_height();
+
+			int dst_w = fb_width / 4;
+			int dst_h = src_h * dst_w / src_w;
+
+			int x = get_random() % (fb_width - dst_w);
+			int y = get_random() % (fb_height - dst_h);
+
+			if (*bg)
+			{
+				imlib_context_set_image(*bg);
+				imlib_blend_image_onto_image(logo, 1,
+					0, 0,             //int source_x, int source_y,
+					src_w, src_h,     //int source_width, int source_height,
+					x, y,             //int destination_x, int destination_y,
+					dst_w, dst_h      //int destination_width, int destination_height
+				);
+			}
+		}
+
 		if (curtain)
 		{
 			if (idle > 1 && *bg)
 			{
 				imlib_context_set_image(*bg);
-				imlib_blend_image_onto_image(curtain, 1,
-					0, 0,                //int source_x, int source_y,
-					fb_width, fb_height, //int source_width, int source_height,
-					0, 0,                //int destination_x, int destination_y,
-					fb_width, fb_height  //int destination_width, int destination_height
-				);
+				int k = (idle == 4) ? 4 : 2;
+				for (int i = 0; i < k; i++)
+				{
+					imlib_blend_image_onto_image(curtain, 1,
+						0, 0,                //int source_x, int source_y,
+						fb_width, fb_height, //int source_width, int source_height,
+						0, 0,                //int destination_x, int destination_y,
+						fb_width, fb_height  //int destination_width, int destination_height
+					);
+				}
 			}
 		}
 		else
