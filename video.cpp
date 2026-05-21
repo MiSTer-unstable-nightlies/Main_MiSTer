@@ -26,6 +26,7 @@
 #include "str_util.h"
 #include "profiling.h"
 #include "offload.h"
+#include "hdmi_cec.h"
 
 #include "support.h"
 #include "support/arcade/mra_loader.h"
@@ -1405,7 +1406,7 @@ int hdmi_has_int()
 	if (has_int < 0)
 	{
 		has_int = spi_uio_cmd(UIO_HDMI_INT);
-		if (!has_int) printf("HDMI interrupt pin is not available in this core.\n");
+		if (!has_int) printf("HDMI interrupt pin is not available in this core. Hotplug and CEC won't be available.\n");
 	}
 	return has_int;
 }
@@ -1413,21 +1414,30 @@ int hdmi_has_int()
 static void hdmi_config_init()
 {
 	int ypbpr = (cfg.vga_mode_int == 1) && (cfg.direct_video == 1);
-	uint8_t int0 = hdmi_has_int() ? 0xC4 : 0x00; // HPD, SENSE, EDID
+	uint8_t int0 = hdmi_has_int() ? 0xC0 : 0x00; // HPD + SENSE
 
-	hdmi_main_fd = i2c_open(0x39, 0);
 	if (hdmi_main_fd < 0)
 	{
-		printf("ADV7513 not found on i2c bus! HDMI won't be available!\n");
-		return;
-	}
-	else
-	{
-		hdmi_edid_fd = i2c_open(0x3f, 0);
-		if (hdmi_edid_fd < 0) printf("ADV7513: cannot find EDID registers.\n");
+		hdmi_main_fd = i2c_open(0x39, 0);
+		if (hdmi_main_fd < 0)
+		{
+			printf("ADV7513 not found on i2c bus! HDMI won't be available!\n");
+			return;
+		}
+		else
+		{
+			if (hdmi_edid_fd < 0)
+			{
+				hdmi_edid_fd = i2c_open(0x3f, 0);
+				if (hdmi_edid_fd < 0) printf("ADV7513: cannot find EDID registers.\n");
+			}
 
-		hdmi_spd_fd = i2c_open(0x38, 0);
-		if (hdmi_spd_fd < 0) printf("ADV7513: cannot find SPD registers.\n");
+			if (hdmi_spd_fd < 0)
+			{
+				hdmi_spd_fd = i2c_open(0x38, 0);
+				if (hdmi_spd_fd < 0) printf("ADV7513: cannot find SPD registers.\n");
+			}
+		}
 	}
 
 	// address, value
@@ -1577,17 +1587,6 @@ static void hdmi_config_init()
 	}
 
 	hdmi_config_set_csc();
-}
-
-void video_hdmi_power(int on)
-{
-	// ADV7513 power-down control. 0 = power on, 1 = power down.
-	if (hdmi_main_fd >= 0)
-	{
-		uint8_t val = on ? 0x00 : 0x40;
-		int res = i2c_smbus_write_byte_data(hdmi_main_fd, 0x41, val);
-		if (res < 0) printf("i2c: write error (41 %02X): %d\n", val, res);
-	}
 }
 
 static void hdmi_config_set_hdr()
@@ -2637,18 +2636,18 @@ void video_init()
 	video_set_mode(&v_def, 0);
 }
 
-void video_reload_edid_mode()
+void video_reinit()
 {
-	read_edid(true);
+	printf("*** Video re-initialization.\n");
 
-	// skip video re-initialization if explicitly specified.
-	if (cfg.direct_video || cfg.video_conf[0] || cfg.video_conf_pal[0] || cfg.video_conf_ntsc[0]) return;
+	hdmi_config_init();
+	read_edid(true);
+	hdmi_config_set_hdr();
 
 	support_FHD = 0;
 	video_mode_load();
-	if (!vmode_def && !is_edid_valid()) return;
 
-	printf("EDID: applying refreshed HDMI mode.\n");
+	video_cfg_init();
 	video_set_mode(&v_def, 0);
 	user_io_send_buttons(1);
 	video_mode_adjust(1);
@@ -2656,16 +2655,29 @@ void video_reload_edid_mode()
 	return;
 }
 
+void video_hdmi_power(int on)
+{
+	// ADV7513 power-down control. 0 = power on, 1 = power down.
+	if (hdmi_main_fd >= 0)
+	{
+		uint8_t val = on ? 0x00 : 0x40;
+		int res = i2c_smbus_write_byte_data(hdmi_main_fd, 0x41, val);
+		if (res < 0) printf("i2c: write error (41 %02X): %d\n", val, res);
+	}
+}
+
 void video_poll()
 {
 	if (!hdmi_has_int()) return;
+
+	cec_poll();
 
 	if (fpga_get_hdmi_int())
 	{
 		uint8_t irq_status = i2c_smbus_read_byte_data(hdmi_main_fd, 0x96);
 		if (irq_status == 0) return;
 
-		uint8_t clear_mask = irq_status & (0x80 | 0x40 | 0x04);
+		uint8_t clear_mask = irq_status & (0x80 | 0x40);
 		if (clear_mask) i2c_smbus_write_byte_data(hdmi_main_fd, 0x96, clear_mask);
 
 		if (irq_status & (0x80 | 0x40))
@@ -2679,27 +2691,16 @@ void video_poll()
 			// and internal display termination (Monitor Sense) are fully high and stable
 			if (hpd_high && MS_high)
 			{
-				printf("[HDMI] HPD and Monitor Sense Stable. Launching EDID fetch...\n");
-
+				printf("[HDMI] HPD and Monitor Sense Stable. Power up, re-initializing...\n");
 				video_hdmi_power(1);
 				usleep(150000);
-
-				// Manually trigger the hardware DDC engine to read the downstream EDID
-				i2c_smbus_write_byte_data(hdmi_main_fd, 0xC9, 0x03);
-				usleep(1000);
-				i2c_smbus_write_byte_data(hdmi_main_fd, 0xC9, 0x13);
+				video_reinit();
 			}
 			else
 			{
 				printf("[HDMI] Link lost or re-routing (HPD=%d, MS=%d)\n", hpd_high, MS_high);
+				video_hdmi_power(0);
 			}
-		}
-
-		// Handle Data Fetch Completion (The hardware finished downloading the EDID)
-		if (irq_status & 0x04)
-		{
-			printf("[HDMI] new EDID is ready\n");
-			video_reload_edid_mode();
 		}
 	}
 }
