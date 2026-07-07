@@ -1208,9 +1208,6 @@ void HandleUI(void)
 		c = menu_key_get();
 	}
 
-	int release = 0;
-	if (c & UPSTROKE) release = 1;
-
 	// decode and set events
 	menu = false;
 	back = false;
@@ -1233,12 +1230,10 @@ void HandleUI(void)
 		static uint32_t wake_release = 0;
 		if (!video_fb_state() && cfg.fb_terminal)
 		{
-			if (wake_release)
+			if (c == wake_release)
 			{
-				uint32_t wr = wake_release;
 				wake_release = 0;
-				if (c == wr) c = 0;
-				else if (!c) wake_release = wr;
+				c = 0;
 			}
 
 			if (timeout && CheckTimer(timeout))
@@ -1270,10 +1265,7 @@ void HandleUI(void)
 				timeout = 0;
 				if (menu_visible <= 0)
 				{
-					// some keys (F12/ESC/Back) act on release, so swallow the
-					// wake-up key's release too, otherwise it flips the OSD
-					// to the system settings page
-					if (c && !(c & UPSTROKE)) wake_release = c | UPSTROKE;
+					wake_release = c | UPSTROKE;
 					c = 0;
 					menu_visible = 1;
 					video_menu_bg(user_io_status_get("[3:1]"));
@@ -5543,7 +5535,7 @@ void HandleUI(void)
 			}
 		}
 
-		if (release) PrintDirectory(1);
+		if (c & UPSTROKE) PrintDirectory(1);
 		break;
 
 		/******************************************************************/
