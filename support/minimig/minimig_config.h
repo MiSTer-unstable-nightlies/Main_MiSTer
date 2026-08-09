@@ -14,6 +14,9 @@
 #define CONFIG_FLOPPY1X  0
 #define CONFIG_FLOPPY2X  1
 
+#define CONFIG_PRESET_CD32  1
+#define CONFIG_PRESET_CDTV  2
+
 extern const char *config_memory_chip_msg[];
 extern const char *config_memory_slow_msg[];
 extern const char *config_memory_fast_msg[][8];
@@ -64,6 +67,8 @@ typedef struct
 
 extern mm_configTYPE minimig_config;
 
+void minimig_cfg_set(int preset);
+
 int minimig_cfg_load(int num);
 int minimig_cfg_save(int num);
 const char* minimig_get_cfg_info(int num, int label);
@@ -81,7 +86,7 @@ void minimig_ConfigVideo(unsigned char scanlines);
 void minimig_ConfigAudio(unsigned char audio);
 void minimig_ConfigMemory(unsigned char memory);
 void minimig_ConfigCPU(unsigned char cpu);
-void minimig_ConfigChipset(unsigned char chipset);
+void minimig_ConfigChipset(mm_configTYPE *config);
 void minimig_ConfigFloppy(unsigned char drives, unsigned char speed);
 void minimig_ConfigAutofire(unsigned char autofire, unsigned char mask);
 
