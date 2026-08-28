@@ -587,6 +587,8 @@ int minimig_cfg_load(int num)
 		BootPrintEx(">>> No config found. Using defaults. <<<");
 	}
 
+	if ((minimig_config.cpu & 0x03) == 0x02) minimig_config.cpu |= 0x01;
+
 	a2065_cfg_set(minimig_config.a2065_mode);
 
 	for (int i = 0; i < 4; i++)
@@ -885,7 +887,7 @@ void minimig_cfg_set(int preset)
 	switch (preset)
 	{
 	case CONFIG_PRESET_CD32:
-		minimig_config.cpu = 3; // 68020, d-cache off;
+		minimig_config.cpu = 0x23; // 68020 14MHz, d-cache off;
 		minimig_config.chipset = (6 << 2); // AGA
 		minimig_config.memory = 3; // ChipRAM 2MB, FastRAM 0MB
 		minimig_set_kickstart(preset_rom_path(CD32_MAIN_ROM));
@@ -931,7 +933,7 @@ void minimig_cfg_set(int preset)
 		break;
 
 	case CONFIG_PRESET_A1200:
-		minimig_config.cpu = 3; // 68020, d-cache off;
+		minimig_config.cpu = 0x23; // 68020 14MHz, d-cache off;
 		minimig_config.chipset = (6 << 2); // AGA
 		minimig_config.memory = 3; // ChipRAM 2MB, FastRAM 0MB
 		minimig_set_kickstart(preset_rom_path(A1200_MAIN_ROM));
