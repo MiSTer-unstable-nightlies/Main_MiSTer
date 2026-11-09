@@ -443,6 +443,13 @@ char is_marty()
 	return (is_marty_type == 1);
 }
 
+static int is_videobrain_type = 0;
+char is_videobrain()
+{
+	if (!is_videobrain_type) is_videobrain_type = strcasecmp(orig_name, "VideoBrain") ? 2 : 1;
+	return (is_videobrain_type == 1);
+}
+
 static int is_pcfx_type = 0;
 char is_pcfx()
 {
@@ -515,6 +522,7 @@ void user_io_read_core_name()
 	is_electron_type = 0;
 	is_saturn_type = 0;
 	is_marty_type = 0;
+	is_videobrain_type = 0;
 	is_pcfx_type = 0;
 	is_n64_type = 0;
 	is_uneon_type = 0;
@@ -1686,6 +1694,7 @@ void user_io_init(const char *path, const char *xml)
 					if (is_uneon()) x86_ide_set();
 					if (is_cdi()) cdi_load_root_nvram();
 					if (is_marty()) marty_init();
+					if (is_videobrain()) videobrain_init();
 					if (is_pcfx()) pcfx_init();
 
 					if (!strlen(path) || !user_io_file_tx(path, 0, 0, 0, 1))
@@ -2279,6 +2288,10 @@ int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_
 					const bool oric_a2_slot = oric_core && index < 2 && (ext_idx == 1 || ext_idx == 2);
 					const bool dsk_ext = !strcasecmp(name + len - 4, ".dsk");
 					const bool do_ext = len > 3 && !strcasecmp(name + len - 3, ".do");
+					// .po only on the floppy slots: the Apple-II core also mounts .po as a hard disk.
+					const bool po_ext = index < 2 && len > 3 && !strcasecmp(name + len - 3, ".po");
+					// A .dsk/.do/.po that is really a 35-track NIB is passed through as-is.
+					const bool nib_sized = sd_image[index].size == A2NIB_IMAGE_SIZE;
 					if (!strcasecmp(name + len - 4, ".d64")
 						|| !strcasecmp(name + len - 4, ".g64")
 						|| !strcasecmp(name + len - 4, ".d71")
@@ -2293,10 +2306,11 @@ int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_
 					{
 						img_type = G64_SUPPORT_HD | G64_SUPPORT_DS;
 					}
-					else if ((dsk_ext && (a2_core || oric_a2_slot)) || (do_ext && oric_a2_slot))
+					else if (!nib_sized && (((dsk_ext || do_ext || po_ext) && a2_core) || ((dsk_ext || do_ext) && oric_a2_slot)))
 					{
-						printf("FOUND A2 DSK/DO type\n");
+						printf("FOUND A2 %s type (nibblized on the fly)\n", po_ext ? "PO" : "DSK/DO");
 						sd_type[index] = SD_TYPE_A2;
+						a2_set_image(index, po_ext);
 					}
 				}
 
@@ -3528,8 +3542,8 @@ void user_io_poll()
 			if ( sd_type[disk] == SD_TYPE_A2)
 			{
 				//if (op) printf("A2 %x %llu on %d\n", op,lba, disk);
-				if (op == 2) a2_writeDSK(&sd_image[disk], lba, ack);
-				else if (op & 1) a2_readDSK(&sd_image[disk], lba, ack);
+				if (op == 2) a2_writeDSK(&sd_image[disk], lba, ack, disk);
+				else if (op & 1) a2_readDSK(&sd_image[disk], lba, ack, disk);
 				else break;
 			}
 			else if ( sd_type[disk] == SD_TYPE_IIGS)
@@ -4073,6 +4087,7 @@ void user_io_poll()
 	if (is_pce()) pcecd_poll();
 	if (is_saturn()) saturn_poll();
 	if (is_marty()) marty_poll();
+	if (is_videobrain()) videobrain_poll();
 	if (is_pcfx()) pcfx_poll();
 	if (is_cdi()) cdi_poll();
 	if (is_psx()) psx_poll();
