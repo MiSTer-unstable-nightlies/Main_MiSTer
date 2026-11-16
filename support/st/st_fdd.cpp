@@ -23,6 +23,7 @@
 #include "st_ipf.h"
 #include "st_mfmt.h"
 #include "st_stx.h"
+#include "st_tos.h"
 
 #define ST_FDD_SLOTS     2
 #define ST_FDD_MAX_FILE  (4 * 1024 * 1024)
@@ -158,8 +159,10 @@ static const StFddTrack &build(StFddSlot &s, int cyl, int head)
 	return t;
 }
 
-int st_fdd_sd_service(int disk, int op, uint64_t lba, int sz, int ack)
+int st_fdd_sd_service(int disk, fileTYPE *, int op, uint64_t lba, int sz, int ack)
 {
+	tos_poll();
+
 	if (!is_st() || disk < 0 || disk >= ST_FDD_SLOTS || !slots[disk].stx) return 0;
 	StFddSlot &s = slots[disk];
 
@@ -199,4 +202,15 @@ int st_fdd_sd_service(int disk, int op, uint64_t lba, int sz, int ack)
 	spi_block_write(buf, user_io_get_width(), sz);
 	DisableIO();
 	return 1;
+}
+
+char is_st()
+{
+	static int is_st_type = 0;
+	if (!is_st_type)
+	{
+		is_st_type = strcasecmp(user_io_get_core_name(1), "AtariST") ? 2 : 1;
+		if (is_st_type == 1) sd_service = st_fdd_sd_service;
+	}
+	return (is_st_type == 1);
 }

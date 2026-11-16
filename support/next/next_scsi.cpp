@@ -5,6 +5,7 @@
 #include "../../spi.h"
 #include "../../file_io.h"
 #include "next_scsi.h"
+#include "next_enet.h"
 #include "next_cdrom.h"
 #include "next_mo.h"
 
@@ -175,8 +176,9 @@ void next_scsi_window_fill(uint32_t lba, uint8_t *buf, int sz)
 	buf[NEXT_RESP_LEN + 1] = (uint8_t)len;
 }
 
-int next_sd_service(int disk, int op, uint32_t lba, int sz, int ack)
+int next_sd_service(int disk, fileTYPE *, int op, uint64_t lba, int sz, int ack)
 {
+	lba = (uint32_t)lba;
 	static uint8_t buf[4096];
 	if (!is_next() || sz > (int)sizeof(buf)) return 0;
 
@@ -239,4 +241,19 @@ int next_sd_service(int disk, int op, uint32_t lba, int sz, int ack)
 	}
 
 	return 0;
+}
+
+char is_next()
+{
+	static int type = 0;
+	if (!type && user_io_get_core_name(1)[0])
+	{
+		type = (!strcasecmp(user_io_get_core_name(1), "NeXT") || !strcasecmp(user_io_get_core_name(1), "NeXT-Color")) ? 1 : 2;
+		if (type == 1)
+		{
+			sd_service = next_sd_service;
+			core_poll = next_enet_poll;
+		}
+	}
+	return type == 1;
 }

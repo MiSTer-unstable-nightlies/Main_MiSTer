@@ -101,8 +101,8 @@
 #define UIO_MM2_FLP     0xF7 //0x44
 #define UIO_MM2_HDD     0xF8 //0x54
 #define UIO_MM2_JOY     0xF9 //0x64
-#define UIO_MM2_FLPEX01 0xFA 
-#define UIO_MM2_FLPEX23 0xFB 
+#define UIO_MM2_FLPEX01 0xFA
+#define UIO_MM2_FLPEX23 0xFB
 #define UIO_MM2_USRPORT 0xFC
 
 #define JOY_RIGHT       0x01
@@ -170,6 +170,10 @@
 
 #define UIO_BUFFER_SIZE 16384
 
+typedef int (*sd_service_t)(int disk, fileTYPE *f, int op, uint64_t lba, int sz, int ack);
+extern sd_service_t sd_service;
+extern void (*core_poll)();
+
 void user_io_init(const char *path, const char *xml);
 unsigned char user_io_core_type();
 void user_io_read_core_name();
@@ -179,6 +183,7 @@ char user_io_user_button();
 void user_io_osd_key_enable(char);
 int user_io_get_kbd_reset();
 void user_io_set_kbd_reset(int reset);
+void user_io_set_kbd_led(int led, int state);
 
 int substrcpy(char *d, const char *s, char idx);
 
@@ -241,7 +246,7 @@ int user_io_get_width();
 
 void user_io_check_reset(unsigned short modifiers, char useKeys);
 
-void user_io_rtc_reset();
+void user_io_send_rtc(int type);
 
 const char* get_rbf_dir();
 const char* get_rbf_name();
@@ -274,38 +279,9 @@ void diskled_on();
 #define DISKLED_ON  diskled_on()
 #define DISKLED_OFF void()
 
-char is_minimig();
-char is_next();
-char is_falcon();
 char is_menu();
-char is_x86();
-char is_snes();
-char is_sgb();
-char is_apple2();
-char user_io_a2_woz_enabled();
-char is_neogeo();
-char is_neogeo_cd();
-char is_megacd();
-char is_pce();
-char is_archie();
-char is_gba();
-char is_c64();
-char is_c128();
-char is_st();
-char is_psx();
-char is_cdi();
 char is_arcade();
-char is_saturn();
-char is_pcxt();
-char is_pcat286();
-char is_n64();
-char is_uneon();
-char is_atari800();
-char is_atari5200();
-char is_3do();
-char is_marty();
-char is_videobrain();
-char is_pcfx();
+char user_io_a2_woz_enabled();
 
 #define HomeDir(x) user_io_get_core_path(x)
 #define CoreName user_io_get_core_name()

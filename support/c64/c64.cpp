@@ -633,6 +633,16 @@ static void c64_synthesize_g64_image(int idx, uint32_t phys_addr, uint32_t map_s
 	}
 }
 
+int c64_sd_service(int disk, fileTYPE *, int op, uint64_t lba, int sz, int)
+{
+	if (sz != (G64_BLOCK_COUNT_1541 + 1) * 256 && sz != (G64_BLOCK_COUNT_1571 + 1) * 256) return 0;
+	uint32_t blks = sz / 256 - 1;
+	if (op == 2) c64_writeGCR(disk, lba, blks);
+	else if (op & 1) c64_readGCR(disk, lba, blks);
+	else return -1;
+	return 1;
+}
+
 void c64_readGCR(int idx, uint64_t lba, uint32_t blks)
 {
 	// dbgprintf("c64_readGCR: idx=%d, lba=%04llx, blks=%d\n", idx, lba, blks);
@@ -1158,4 +1168,26 @@ void c64_save_cart(int open_menu)
 	}
 
 	if (open_menu) menu_key_set(KEY_F12);
+}
+
+static void c64_poll()
+{
+	uint16_t save_req = spi_uio_cmd(UIO_CHK_UPLOAD);
+	if (save_req) c64_save_cart(save_req >> 8);
+}
+
+char is_c64()
+{
+	static int is_c64_type = 0;
+	if (!is_c64_type && user_io_get_core_name(1)[0]) is_c64_type = strcasecmp(user_io_get_core_name(1), "C64") ? 2 : 1;
+	if (is_c64_type == 1) core_poll = c64_poll;
+	return (is_c64_type == 1);
+}
+
+char is_c128()
+{
+	static int is_c128_type = 0;
+	if (!is_c128_type && user_io_get_core_name(1)[0]) is_c128_type = strcasecmp(user_io_get_core_name(1), "C128") ? 2 : 1;
+	if (is_c128_type == 1) core_poll = c64_poll;
+	return (is_c128_type == 1);
 }

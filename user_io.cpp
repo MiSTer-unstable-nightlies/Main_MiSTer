@@ -43,16 +43,15 @@
 #include "scaler.h"
 #include "support.h"
 
+sd_service_t sd_service = nullptr;
+void (*core_poll)() = nullptr;
+
 static char core_path[1024] = {};
 static char rbf_path[1024] = {};
 
 static fileTYPE sd_image[16] = {};
 
-#define  SD_TYPE_DEFAULT 0
-#define  SD_TYPE_C64 1
-#define  SD_TYPE_A2 2
-
-static int      sd_type[16] = {};
+static sd_service_t sd_image_service[16] = {};
 static unsigned char last_file_ext_idx = 0;
 static int      sd_image_cangrow[16] = {};
 static uint64_t buffer_lba[16] = { ULLONG_MAX,ULLONG_MAX,ULLONG_MAX,ULLONG_MAX,
@@ -71,9 +70,6 @@ static unsigned char dual_sdr = 0;
 
 static int fio_size = 0;
 static int io_ver = 0;
-
-// keep state of caps lock
-static char caps_lock_toggle = 0;
 
 #define LED_FREQ 100   // 100 ms
 static unsigned long led_timer;
@@ -210,6 +206,13 @@ char *user_io_get_core_path(const char *suffix, int recheck)
 	return tmp;
 }
 
+// Guests that read the battery clock as UTC and apply their own time zone
+// (UNIX systems); every other guest gets the timestamp in local time.
+static char rtc_is_utc()
+{
+	return is_next() || is_hp9k_family();
+}
+
 static char is_arcade_type = 0;
 char is_arcade()
 {
@@ -219,270 +222,8 @@ char is_arcade()
 static int is_menu_type = 0;
 char is_menu()
 {
-	if (!is_menu_type) is_menu_type = strcasecmp(orig_name, "MENU") ? 2 : 1;
+	if (!is_menu_type && orig_name[0]) is_menu_type = strcasecmp(orig_name, "MENU") ? 2 : 1;
 	return (is_menu_type == 1);
-}
-
-static int is_x86_type = 0;
-char is_x86()
-{
-	if (!is_x86_type)
-	{
-		if (!strcasecmp(orig_name, "AO486") ||
-		    !strcasecmp(orig_name, "PC110") ||
-		    !strcasecmp(orig_name, "Z486") ||
-		    !strcasecmp(orig_name, "Z386")
-		   )
-			is_x86_type = 1;
-		else
-			is_x86_type = 2;
-	}
-	return (is_x86_type == 1);
-}
-
-static int is_snes_type = 0;
-char is_snes()
-{
-	if (!is_snes_type) is_snes_type = strcasecmp(orig_name, "SNES") ? 2 : 1;
-	return (is_snes_type == 1);
-}
-
-// True if the running core is the Apple //e (confstr name "Apple-II").
-static int is_apple2_type = 0;
-char is_apple2()
-{
-	if (!is_apple2_type) is_apple2_type = strcasecmp(orig_name, "Apple-II") ? 2 : 1;
-	return (is_apple2_type == 1);
-}
-
-static int is_sgb_type = 0;
-char is_sgb()
-{
-	if (!is_sgb_type) is_sgb_type = strcasecmp(orig_name, "SGB") ? 2 : 1;
-	return (is_sgb_type == 1);
-}
-
-static int is_cpc_type = 0;
-char is_cpc()
-{
-	if (!is_cpc_type) is_cpc_type = strcasecmp(orig_name, "amstrad") ? 2 : 1;
-	return (is_cpc_type == 1);
-}
-
-static int is_zx81_type = 0;
-char is_zx81()
-{
-	if (!is_zx81_type) is_zx81_type = strcasecmp(orig_name, "zx81") ? 2 : 1;
-	return (is_zx81_type == 1);
-}
-
-static int is_neogeo_type = 0;
-char is_neogeo()
-{
-	if (!is_neogeo_type) is_neogeo_type = strcasecmp(orig_name, "neogeo") ? 2 : 1;
-	return (is_neogeo_type == 1);
-}
-
-char is_neogeo_cd() {
-    return is_neogeo() && neocd_is_en();
-}
-
-// NeXTcube ("NeXT") & NeXTstation Turbo ("NeXT-Color") share HPS-side services
-char is_next()
-{
-	return !strcasecmp(orig_name, "NeXT") || !strcasecmp(orig_name, "NeXT-Color");
-}
-
-// Guests that read the battery clock as UTC and apply their own time zone
-// (UNIX systems); every other guest gets the timestamp in local time.
-static char rtc_is_utc()
-{
-	return is_next() || is_hp9k_family();
-}
-
-char is_falcon()
-{
-	return !strcasecmp(orig_name, "Falcon");
-}
-
-static int is_minimig_type = 0;
-char is_minimig()
-{
-	if (!is_minimig_type)
-	{
-		is_minimig_type = (!strcasecmp(orig_name, "minimig") || !strcasecmp(orig_name, "minimigcd")) ? 1 : 2;
-		if (is_minimig_type == 1)
-		{
-			uint16_t res = spi_uio_cmd(UIO_GET_VMODE);
-			if (res == 1) is_minimig_type = 3;
-		}
-
-	}
-
-	return (is_minimig_type == 1) ? 1 : (is_minimig_type == 3) ? 2 : 0;
-}
-
-static int is_megacd_type = 0;
-char is_megacd()
-{
-	if (!is_megacd_type) is_megacd_type = strcasecmp(orig_name, "MEGACD") ? 2 : 1;
-	return (is_megacd_type == 1);
-}
-
-static int is_pce_type = 0;
-char is_pce()
-{
-	if (!is_pce_type) is_pce_type = strcasecmp(orig_name, "TGFX16") ? 2 : 1;
-	return (is_pce_type == 1);
-}
-
-static int is_archie_type = 0;
-char is_archie()
-{
-	if (!is_archie_type) is_archie_type = strcasecmp(orig_name, "ARCHIE") ? 2 : 1;
-	return (is_archie_type == 1);
-}
-
-static int is_pcxt_type = 0;
-char is_pcxt()
-{
-	if (!is_pcxt_type)
-	{
-		if (!strcasecmp(orig_name, "PCXT") ||
-		    !strcasecmp(orig_name, "Tandy1000") ||
-			!strcasecmp(orig_name, "PCjr") ||
-			!strcasecmp(orig_name, "PCXT-EGA")
-		   )
-			is_pcxt_type = 1;
-		else
-			is_pcxt_type = 2;
-	}
-	return (is_pcxt_type == 1);
-}
-
-static int is_pcat286_type = 0;
-char is_pcat286()
-{
-	if (!is_pcat286_type)
-	{
-		if (!strcasecmp(orig_name, "PCAT-286"))
-			is_pcat286_type = 1;
-		else
-			is_pcat286_type = 2;
-	}
-	return (is_pcat286_type == 1);
-}
-
-static int is_gba_type = 0;
-char is_gba()
-{
-	if (!is_gba_type) is_gba_type = strcasecmp(orig_name, "GBA") ? 2 : 1;
-	return (is_gba_type == 1);
-}
-
-static int is_c64_type = 0;
-char is_c64()
-{
-	if (!is_c64_type) is_c64_type = strcasecmp(orig_name, "C64") ? 2 : 1;
-	return (is_c64_type == 1);
-}
-
-static int is_c128_type = 0;
-char is_c128()
-{
-	if (!is_c128_type) is_c128_type = strcasecmp(orig_name, "C128") ? 2 : 1;
-	return (is_c128_type == 1);
-}
-
-static int is_atari800_type = 0;
-char is_atari800()
-{
-	if (!is_atari800_type) is_atari800_type = strcasecmp(orig_name, "Atari800") ? 2 : 1;
-	return (is_atari800_type == 1);
-}
-
-static int is_atari5200_type = 0;
-char is_atari5200()
-{
-	if (!is_atari5200_type) is_atari5200_type = strcasecmp(orig_name, "Atari5200") ? 2 : 1;
-	return (is_atari5200_type == 1);
-}
-
-static int is_psx_type = 0;
-char is_psx()
-{
-	if (!is_psx_type) is_psx_type = strcasecmp(orig_name, "PSX") ? 2 : 1;
-	return (is_psx_type == 1);
-}
-
-static int is_cdi_type = 0;
-char is_cdi()
-{
-	if (!is_cdi_type) is_cdi_type = strcasecmp(orig_name, "CD-i") ? 2 : 1;
-	return (is_cdi_type == 1);
-}
-
-static int is_st_type = 0;
-char is_st()
-{
-	if (!is_st_type) is_st_type = strcasecmp(orig_name, "AtariST") ? 2 : 1;
-	return (is_st_type == 1);
-}
-
-static int is_electron_type = 0;
-char is_electron()
-{
-	if (!is_electron_type) is_electron_type = strcasecmp(orig_name, "AcornElectron") ? 2 : 1;
-	return (is_electron_type == 1);
-}
-
-static int is_marty_type = 0;
-char is_marty()
-{
-	if (!is_marty_type) is_marty_type = strcasecmp(orig_name, "Marty") ? 2 : 1;
-	return (is_marty_type == 1);
-}
-
-static int is_videobrain_type = 0;
-char is_videobrain()
-{
-	if (!is_videobrain_type) is_videobrain_type = strcasecmp(orig_name, "VideoBrain") ? 2 : 1;
-	return (is_videobrain_type == 1);
-}
-
-static int is_pcfx_type = 0;
-char is_pcfx()
-{
-	if (!is_pcfx_type) is_pcfx_type = strcasecmp(orig_name, "PCFX") ? 2 : 1;
-	return (is_pcfx_type == 1);
-}
-
-static int is_saturn_type = 0;
-char is_saturn()
-{
-	if (!is_saturn_type) is_saturn_type = strcasecmp(orig_name, "Saturn") ? 2 : 1;
-	return (is_saturn_type == 1);
-}
-
-static int is_n64_type = 0;
-char is_n64()
-{
-	if (!is_n64_type) is_n64_type = strcasecmp(orig_name, "N64") ? 2 : 1;
-	return (is_n64_type == 1);
-}
-
-static int is_uneon_type = 0;
-char is_uneon()
-{
-	if (!is_uneon_type) is_uneon_type = strcasecmp(orig_name, "Uneon") ? 2 : 1;
-	return (is_uneon_type == 1);
-}
-
-static int is_3do_type = 0;
-char is_3do()
-{
-	if (!is_3do_type) is_3do_type = strcasecmp(orig_name, "3DO") ? 2 : 1;
-	return (is_3do_type == 1);
 }
 
 static int is_no_type = 0;
@@ -497,35 +238,7 @@ char has_menu()
 
 void user_io_read_core_name()
 {
-	is_menu_type = 0;
-	is_x86_type  = 0;
-	is_no_type   = 0;
-	is_snes_type = 0;
-	is_apple2_type = 0;
-	is_sgb_type = 0;
-	is_cpc_type = 0;
-	is_zx81_type = 0;
-	is_neogeo_type = 0;
-	is_minimig_type = 0;
-	is_megacd_type = 0;
-	is_pce_type = 0;
-	is_archie_type = 0;
-	is_gba_type = 0;
-	is_c64_type = 0;
-	is_c128_type = 0;
-	is_atari800_type = 0;
-	is_atari5200_type = 0;
-	is_psx_type = 0;
-	is_cdi_type = 0;
-	is_st_type = 0;
-	is_pcxt_type = 0;
-	is_electron_type = 0;
-	is_saturn_type = 0;
-	is_marty_type = 0;
-	is_videobrain_type = 0;
-	is_pcfx_type = 0;
-	is_n64_type = 0;
-	is_uneon_type = 0;
+	is_no_type = 0;
 	core_name[0] = 0;
 
 	char *p = user_io_get_confstr(0);
@@ -670,7 +383,7 @@ void user_io_status_reset()
 	user_io_status_set("[0]", 0);
 }
 
-static void set_kbd_led(int led, int state)
+void user_io_set_kbd_led(int led, int state)
 {
 	if (led & HID_LED_CAPS_LOCK)
 	{
@@ -700,25 +413,25 @@ static void set_emu_mode(int mode)
 	{
 	case EMU_JOY0:
 		emu_led = 0x20;
-		set_kbd_led(HID_LED_NUM_LOCK | HID_LED_SCROLL_LOCK, HID_LED_NUM_LOCK);
+		user_io_set_kbd_led(HID_LED_NUM_LOCK | HID_LED_SCROLL_LOCK, HID_LED_NUM_LOCK);
 		Info("Kbd mode: Joystick 1", 1000);
 		break;
 
 	case EMU_JOY1:
 		emu_led = 0x40;
-		set_kbd_led(HID_LED_NUM_LOCK | HID_LED_SCROLL_LOCK, HID_LED_SCROLL_LOCK);
+		user_io_set_kbd_led(HID_LED_NUM_LOCK | HID_LED_SCROLL_LOCK, HID_LED_SCROLL_LOCK);
 		Info("Kbd mode: Joystick 2", 1000);
 		break;
 
 	case EMU_MOUSE:
 		emu_led = 0x60;
-		set_kbd_led(HID_LED_NUM_LOCK | HID_LED_SCROLL_LOCK, HID_LED_NUM_LOCK | HID_LED_SCROLL_LOCK);
+		user_io_set_kbd_led(HID_LED_NUM_LOCK | HID_LED_SCROLL_LOCK, HID_LED_NUM_LOCK | HID_LED_SCROLL_LOCK);
 		Info("Kbd mode: Mouse", 1000);
 		break;
 
 	default:
 		emu_led = 0;
-		set_kbd_led(HID_LED_NUM_LOCK | HID_LED_SCROLL_LOCK, 0);
+		user_io_set_kbd_led(HID_LED_NUM_LOCK | HID_LED_SCROLL_LOCK, 0);
 		Info("Kbd mode: Normal", 1000);
 	}
 
@@ -1150,7 +863,7 @@ static void parse_config()
 }
 
 //MSM6242B layout
-static void send_rtc(int type)
+void user_io_send_rtc(int type)
 {
 	//printf("Update RTC\n");
 
@@ -1593,6 +1306,34 @@ void user_io_init(const char *path, const char *xml)
 		printf("Using default MRA: %s\n", xml);
 	}
 
+	is_minimig();
+	is_mac_scsi_family();
+	is_next();
+	is_sun_family();
+	is_hp9k_family();
+	is_ibmrs6k();
+	is_sgi_family();
+	is_decalpha();
+	is_marty();
+	is_pcfx();
+	is_apple3();
+	is_pc88();
+	is_st();
+	is_falcon();
+	is_3b1();
+	is_iigs();
+	is_neogeo();
+	is_megacd();
+	is_pce();
+	is_saturn();
+	is_videobrain();
+	is_cdi();
+	is_psx();
+	is_n64();
+	is_atari800();
+	is_atari5200();
+	is_3do();
+
 	if (cfg.log_file_entry) MakeFile("/tmp/STARTPATH", core_path);
 
 	if (cfg.bootcore[0] != '\0')
@@ -1798,7 +1539,7 @@ void user_io_init(const char *path, const char *xml)
 			parse_buttons();
 		}
 
-		send_rtc(3);
+		user_io_send_rtc(3);
 		if (is_marty() && xml && isXmlName(xml) == 2) marty_mgl_premount();
 		if (is_pcfx() && xml && isXmlName(xml) == 2) pcfx_mgl_premount();
 
@@ -2001,45 +1742,6 @@ uint8_t user_io_ps2_ctl(uint8_t *kbd_ctl, uint8_t *mouse_ctl)
 
 	DisableIO();
 	return res;
-}
-
-// 16 byte fifo for amiga key codes to limit max key rate sent into the core
-#define KBD_FIFO_SIZE  16   // must be power of 2
-static unsigned short kbd_fifo[KBD_FIFO_SIZE];
-static unsigned char kbd_fifo_r = 0, kbd_fifo_w = 0;
-static long kbd_timer = 0;
-
-static void kbd_fifo_minimig_send(uint32_t code)
-{
-	spi_uio_cmd8((code&OSD) ? UIO_KBD_OSD : UIO_KEYBOARD, code & 0xff);
-	kbd_timer = GetTimer(10);  // next key after 10ms earliest
-}
-
-static void kbd_fifo_enqueue(unsigned short code)
-{
-	// if fifo full just drop the value. This should never happen
-	if (((kbd_fifo_w + 1)&(KBD_FIFO_SIZE - 1)) == kbd_fifo_r)
-		return;
-
-	// store in queue
-	kbd_fifo[kbd_fifo_w] = code;
-	kbd_fifo_w = (kbd_fifo_w + 1)&(KBD_FIFO_SIZE - 1);
-}
-
-// send pending bytes if timer has run up
-static void kbd_fifo_poll()
-{
-	// timer enabled and runnig?
-	if (kbd_timer && !CheckTimer(kbd_timer))
-		return;
-
-	kbd_timer = 0;  // timer == 0 means timer is not running anymore
-
-	if (kbd_fifo_w == kbd_fifo_r)
-		return;
-
-	kbd_fifo_minimig_send(kbd_fifo[kbd_fifo_r]);
-	kbd_fifo_r = (kbd_fifo_r + 1)&(KBD_FIFO_SIZE - 1);
 }
 
 int process_ss(const char *rom_name, int enable)
@@ -2247,7 +1949,7 @@ int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_
 	int img_type = 0; // disk image type (for C128 core): bit 0=dual sided, 1=raw GCR supported, 2=raw MFM supported, 3=high density
 
 	sd_image_cangrow[index] = (pre != 0);
-	sd_type[index] = SD_TYPE_DEFAULT ;
+	sd_image_service[index] = nullptr;
 	st_fdd_unmount(index);
 	if (len)
 	{
@@ -2265,7 +1967,7 @@ int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_
 				{
 					img_type = c64_openGCR(name, sd_image + index, index);
 					ret = img_type < 0 ? 0 : 1;
-					sd_type[index] = SD_TYPE_C64;
+					if (ret) sd_image_service[index] = c64_sd_service;
 					if (!ret) FileClose(&sd_image[index]);
 
 					if (ret && is_c128())
@@ -2306,7 +2008,7 @@ int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_
 					{
 						img_type = c64_openGCR(name, sd_image + index, index);
 						ret = img_type < 0 ? 0 : 1;
-						sd_type[index] = SD_TYPE_C64;
+						if (ret) sd_image_service[index] = c64_sd_service;
 						if(!ret) FileClose(&sd_image[index]);
 					}
 					else if (!strcasecmp(name + len - 4, ".d81"))
@@ -2316,7 +2018,7 @@ int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_
 					else if (!nib_sized && (((dsk_ext || do_ext || po_ext) && a2_core) || ((dsk_ext || do_ext) && oric_a2_slot)))
 					{
 						printf("FOUND A2 %s type (nibblized on the fly)\n", po_ext ? "PO" : "DSK/DO");
-						sd_type[index] = SD_TYPE_A2;
+						sd_image_service[index] = a2_sd_service;
 						a2_set_image(index, po_ext);
 					}
 				}
@@ -2333,7 +2035,7 @@ int user_io_file_mount(const char *name, unsigned char index, char pre, int pre_
 					}
 					else if (r == IIGS_HANDLED)
 					{
-						sd_type[index] = SD_TYPE_IIGS;
+						sd_image_service[index] = iigs_sd_service;
 						writable = iigs_w;
 					}
 				}
@@ -3357,16 +3059,8 @@ static void mouse_reply(char code)
 
 static uint8_t use_ps2ctl = 0;
 static unsigned long rtc_timer = 0;
-static unsigned long next_rtc_timer = 0;
-
-void user_io_rtc_reset()
-{
-	rtc_timer = 0;
-}
 
 static int coldreset_req = 0;
-
-static uint32_t res_timer = 0;
 
 void user_io_poll()
 {
@@ -3385,88 +3079,15 @@ void user_io_poll()
 	}
 
 	user_io_send_buttons(0);
-
-	mac_poll();   // Mac SCSI family: Toolbox slot announce + deferred CD work
-	sun_poll();   // Sun SCSI family: write-buffer flushes
-	hp9k_poll();
-	ibmrs6k_poll();
-	sgi_poll();
-	decalpha_poll();
-
-	if (is_minimig())
-	{
-		//HDD & FDD query
-		unsigned char  c1, c2;
-		EnableFpga();
-		uint16_t tmp = spi_w(0);
-		c1 = (uint8_t)(tmp >> 8); // cmd request and drive number
-		c2 = (uint8_t)tmp;      // track number
-		spi_w(0);
-		spi_w(0);
-		DisableFpga();
-		sysled_enable(0);
-		HandleFDD(c1, c2);
-		sysled_enable(1);
-
-		uint16_t sd_req = ide_check();
-		ide_io(0, sd_req & 7);
-		ide_io(1, (sd_req >> 3) & 7);
-		if (sd_req & 0x0100) ide_cdda_send_sector();
-		UpdateDriveStatus();
-
-		if (is_minimig() == 2)
-		{
-			akiko_cd32_poll();
-			cdtv_cd_poll();
-		}
-
-		kbd_fifo_poll();
-
-		if (!rtc_timer || CheckTimer(rtc_timer))
-		{
-			// Update once per minute should be enough
-			rtc_timer = GetTimer(60000);
-			send_rtc(1);
-		}
-
-		minimig_share_poll();
-		a2065_poll();
-	}
-
-	next_enet_poll();
-	iigs_uthernet2_poll();
-	sun_enet_poll();
-	hp9k_enet_poll();
-	b3_eth_poll();
-	ibmrs6k_enet_poll();
-	sgi_enet_poll();
-	decalpha_enet_poll();
-
-	// The NeXT keeps a battery backed clock that the guest reads at
-	// boot; the one-shot update at core load is not enough if the core
-	// sits at the ROM monitor for a while, so refresh it every minute
-	// like the other cores that own a real time clock.  The core stops
-	// applying these once the guest sets its own time.
-	if (is_next() && (!next_rtc_timer || CheckTimer(next_rtc_timer)))
-	{
-		next_rtc_timer = GetTimer(60000);
-		send_rtc(1);
-	}
+	if (core_poll) core_poll();
 
 	if (core_type == CORE_TYPE_8BIT && !is_menu())
 	{
 		check_status_change();
 	}
 
-	// sd card emulation
-	if (is_x86() || is_pcxt() || is_pcat286())
+	if (!is_x86() && !is_pcxt() && !is_pcat286() && (core_type == CORE_TYPE_8BIT) && !is_menu())
 	{
-		x86_poll(0);
-	}
-	else if ((core_type == CORE_TYPE_8BIT) && !is_menu())
-	{
-		if (is_st()) tos_poll();
-		if (is_snes() || is_sgb()) snes_poll();
 		mdplus_poll(); // MD+ CDDA poll
 
 		for (int i = 0; i < 4; i++)
@@ -3480,7 +3101,7 @@ void user_io_poll()
 
 			if (is_uneon() && i == 3)
 			{
-				x86_poll(1);
+				x86_ide_poll();
 				break;
 			}
 
@@ -3560,79 +3181,10 @@ void user_io_poll()
 				blks = 1;
 			}
 			DisableIO();
-			if ( sd_type[disk] == SD_TYPE_A2)
+			sd_service_t service = sd_image_service[disk] ? sd_image_service[disk] : sd_service;
+			if (int result = service ? service(disk, &sd_image[disk], op, lba, sz, ack) : 0)
 			{
-				//if (op) printf("A2 %x %llu on %d\n", op,lba, disk);
-				if (op == 2) a2_writeDSK(&sd_image[disk], lba, ack, disk);
-				else if (op & 1) a2_readDSK(&sd_image[disk], lba, ack, disk);
-				else break;
-			}
-			else if ( sd_type[disk] == SD_TYPE_IIGS)
-			{
-				if (op == 2) iigs_write(disk, &sd_image[disk], lba, ack);
-				else if (op & 1) iigs_read(disk, &sd_image[disk], lba, blks, ack);
-				else break;
-			}
-			else if (int macop = mac_sd_service(disk, &sd_image[disk], op, lba, sz, ack))
-			{
-				// Mac Toolbox/CD slots (support/mac); SPI is done by the hook.
-				if (macop < 0) break;
-			}
-			else if (int nxop = next_sd_service(disk, op, (uint32_t)lba, sz, ack))
-			{
-				if (nxop < 0) break;
-			}
-			else if (int sunop = sun_sd_service(disk, &sd_image[disk], op, lba, sz, ack))
-			{
-				// Sun disk write buffer and CD slot (support/sun); SPI is done by the hook.
-				if (sunop < 0) break;
-			}
-			else if (int hpop = hp9k_sd_service(disk, &sd_image[disk], op, lba, sz, ack))
-			{
-				if (hpop < 0) break;
-			}
-			else if (int rsop = ibmrs6k_sd_service(disk, &sd_image[disk], op, lba, sz, ack))
-			{
-				if (rsop < 0) break;
-			}
-			else if (int sgop = sgi_sd_service(disk, &sd_image[disk], op, lba, sz, ack))
-			{
-				if (sgop < 0) break;
-			}
-			else if (int daop = decalpha_sd_service(disk, &sd_image[disk], op, lba, sz, ack))
-			{
-				if (daop < 0) break;
-			}
-			else if (int mop = marty_sd_service(disk, op, (uint32_t)lba, sz, ack))
-			{
-				if (mop < 0) break;
-      }
-			else if (int pop = pcfx_sd_service(disk, op, (uint32_t)lba, sz, ack))
-			{
-				if (pop < 0) break;
-			}
-			else if (int a3op = a3_sd_service(disk, &sd_image[disk], op, lba, sz, ack))
-			{
-				if (a3op < 0) break;
-			}
-			else if (int pc88op = pc88_sd_service(disk, &sd_image[disk], op, lba, sz, ack))
-			{
-				if (pc88op < 0) break;
-			}
-			else if (int stop = st_fdd_sd_service(disk, op, lba, sz, ack))
-			{
-				if (stop < 0) break;
-			}
-			else if (int falop = falcon_sd_service(disk, op, lba, sz, ack))
-			{
-				// Falcon SCSI response windows / translated CD (support/falcon); SPI is done by the hook.
-				if (falop < 0) break;
-			}
-			else if ((blks == G64_BLOCK_COUNT_1541+1 || blks == G64_BLOCK_COUNT_1571+1) && sd_type[disk]==SD_TYPE_C64)
-			{
-				if (op == 2) c64_writeGCR(disk, lba, blks-1);
-				else if (op & 1) c64_readGCR(disk, lba, blks-1);
-				else break;
+				if (result < 0) break;
 			}
 			else if (is_n64() && n64_process_save(use_save, op, lba, blksz, ack, buffer_lba[disk], buffer[disk], sizeof(*buffer), sz))
 			{
@@ -3833,10 +3385,8 @@ void user_io_poll()
 	{
 		// Update once per minute should be enough
 		rtc_timer = GetTimer(60000);
-		send_rtc(1);
+		user_io_send_rtc(1);
 	}
-
-	if (is_archie()) archie_poll();
 
 	static uint8_t leds = 0;
 
@@ -4037,57 +3587,35 @@ void user_io_poll()
 		if (info_n) show_core_info(info_n);
 	}
 
-	if (!res_timer)
+	static uint32_t sdr_timer = 0;
+	static int got_cfg = 0;
+	if (!got_cfg && is_menu() && (!sdr_timer || CheckTimer(sdr_timer)))
 	{
-		res_timer = GetTimer(1000);
-	}
-	else if (CheckTimer(res_timer))
-	{
-		if (is_menu())
-		{
-			static int got_cfg = 0;
-			if (!got_cfg)
-			{
-				spi_uio_cmd_cont(UIO_GET_OSDMASK);
-				sdram_cfg = spi_w(0);
-				DisableIO();
+		spi_uio_cmd_cont(UIO_GET_OSDMASK);
+		sdram_cfg = spi_w(0);
+		DisableIO();
 
-				if (sdram_cfg & 0x8000)
-				{
-					got_cfg = 1;
-					printf("*** Got SDRAM module type: %d\n", sdram_cfg & 7);
-					switch (user_io_get_sdram_cfg() & 7)
-					{
-					case 7:
-						sdram_sz(3);
-						break;
-					case 3:
-						sdram_sz(2);
-						break;
-					case 1:
-						sdram_sz(1);
-						break;
-					default:
-						sdram_sz(0);
-					}
-				}
+		if (sdram_cfg & 0x8000)
+		{
+			got_cfg = 1;
+			printf("*** Got SDRAM module type: %d\n", sdram_cfg & 7);
+			switch (user_io_get_sdram_cfg() & 7)
+			{
+			case 7:
+				sdram_sz(3);
+				break;
+			case 3:
+				sdram_sz(2);
+				break;
+			case 1:
+				sdram_sz(1);
+				break;
+			default:
+				sdram_sz(0);
 			}
 		}
 
-		res_timer = GetTimer(500);
-		if (!minimig_get_adjust())
-		{
-			if (is_minimig()) minimig_adjust_vsize(0);
-			video_mode_adjust();
-		}
-
-		/*
-		uint32_t frcnt = spi_uio_cmd(UIO_GET_FR_CNT);
-		if (frcnt & 0x100)
-		{
-			printf("frames:%d\n", frcnt & 0xFF);
-		}
-		*/
+		sdr_timer = GetTimer(500);
 	}
 
 	static int prev_coldreset_req = 0;
@@ -4116,24 +3644,6 @@ void user_io_poll()
 		diskled_is_on = 0;
 	}
 
-	if (is_megacd()) mcd_poll();
-	if (is_pce()) pcecd_poll();
-	if (is_saturn()) saturn_poll();
-	if (is_marty()) marty_poll();
-	if (is_videobrain()) videobrain_poll();
-	if (is_pcfx()) pcfx_poll();
-	if (is_cdi()) cdi_poll();
-	if (is_psx()) psx_poll();
-	if (is_neogeo_cd()) neocd_poll();
-	if (is_n64()) n64_poll();
-	if (is_c64() || is_c128())
-	{
-		uint16_t save_req = spi_uio_cmd(UIO_CHK_UPLOAD);
-		if (save_req) c64_save_cart(save_req >> 8);
-	}
-	if (is_atari800()) atari800_poll();
-	if (is_atari5200()) atari5200_poll();
-	if (is_3do()) p3do_poll();
 	process_ss(0);
 
 	if (cfg.hdmi_off)
@@ -4178,62 +3688,10 @@ static void send_keycode(unsigned short key, int press)
 			return;
 		}
 	}
+
 	if (is_minimig())
 	{
-		if (press > 1) return;
-
-		uint32_t code = get_amiga_code(key);
-		if (code == NONE) return;
-
-		if (code & CAPS_TOGGLE)
-		{
-			if (press)
-			{
-				// send alternating make and break codes for caps lock
-				if(caps_lock_toggle) code |= 0x80;
-				caps_lock_toggle ^= HID_LED_CAPS_LOCK;
-				set_kbd_led(HID_LED_CAPS_LOCK, caps_lock_toggle);
-			}
-			else
-			{
-				return;
-			}
-		}
-		else
-		{
-			// amiga has "break" marker in msb
-			if (!press) code |= 0x80;
-		}
-
-		code &= 0xff;
-		if (minimig_get_adjust())
-		{
-			if (code == 0x44)
-			{
-				minimig_set_adjust(0);
-				res_timer = 0;
-				return;
-			}
-
-			if (code == 0x45)
-			{
-				Info("Canceled");
-				res_timer = 0;
-				minimig_set_adjust(2);
-				return;
-			}
-			code |= OSD;
-		}
-
-		// send immediately if possible
-		if (CheckTimer(kbd_timer) && (kbd_fifo_w == kbd_fifo_r))
-		{
-			kbd_fifo_minimig_send(code);
-		}
-		else
-		{
-			kbd_fifo_enqueue(code);
-		}
+		minimig_send_keycode(key, press);
 		return;
 	}
 

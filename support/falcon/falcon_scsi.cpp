@@ -688,8 +688,9 @@ const falcon_cd_audio *falcon_scsi_audio(int unit)
 // ---------------------------------------------------------------------------
 // sector service (called from the user_io sd request loop)
 
-int falcon_sd_service(int disk, int op, uint32_t lba, int sz, int ack)
+int falcon_sd_service(int disk, fileTYPE *, int op, uint64_t lba, int sz, int ack)
 {
+	lba = (uint32_t)lba;
 	static uint8_t blk[512];
 	if (!is_falcon()) return 0;
 	int unit = slot_unit(disk);
@@ -741,4 +742,15 @@ int falcon_sd_service(int disk, int op, uint32_t lba, int sz, int ack)
 		return 1;
 	}
 	return 0;
+}
+
+char is_falcon()
+{
+	static int type = 0;
+	if (!type)
+	{
+		type = !strcasecmp(user_io_get_core_name(1), "Falcon") ? 1 : 2;
+		if (type == 1) sd_service = falcon_sd_service;
+	}
+	return type == 1;
 }

@@ -1022,10 +1022,11 @@ int marty_block_size(int index, int wire_size)
 
 // CD, floppies, CMOS and a card not yet on disk are served here; other
 // slots are plain images. Returns 0 for those, -1 on a bad op.
-int marty_sd_service(int disk, int op, uint32_t lba, int sz, int ack)
+int marty_sd_service(int disk, fileTYPE *f, int op, uint64_t lba, int sz, int ack)
 {
+	lba = (uint32_t)lba;
 	if (!is_marty()) return 0;
-	fileTYPE *img = get_image(disk);
+	fileTYPE *img = f;
 	int fdd = disk == MARTY_SLOT_FDD || disk == MARTY_SLOT_FDD2;
 	int card = disk == MARTY_SLOT_CARD && img->type == 2;
 	if (disk != MARTY_SLOT_CD && disk != MARTY_SLOT_CMOS && !fdd && !card) return 0;
@@ -1397,4 +1398,19 @@ void marty_poll()
 	for (int bit = 0; bit < 10; bit++)
 		if (req & (1 << bit)) create_image(bit, req >> 15);
 	spi_uio_cmd16(UIO_MARTY_ACK_REQ, req & 0x3FF);
+}
+
+char is_marty()
+{
+	static int is_marty_type = 0;
+	if (!is_marty_type)
+	{
+		is_marty_type = strcasecmp(user_io_get_core_name(1), "Marty") ? 2 : 1;
+		if (is_marty_type == 1)
+		{
+			sd_service = marty_sd_service;
+			core_poll = marty_poll;
+		}
+	}
+	return (is_marty_type == 1);
 }

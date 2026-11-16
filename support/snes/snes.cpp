@@ -9,6 +9,7 @@
 #include "../../file_io.h"
 #include "../../user_io.h"
 #include "../../spi.h"
+#include "snes.h"
 
 static uint8_t hdr[512];
 
@@ -128,7 +129,7 @@ static uint32_t find_header(const uint8_t *data, uint32_t size)
 }
 
 const char snes_cc92_header[] = {
-	0x00, 0x08, 0x22, 0x02, 0x1C, 0x00, 0x10, 0x00, 0x08, 0x65, 0x80, 0x84, 0x20, 0x00, 0x22, 0x25, 
+	0x00, 0x08, 0x22, 0x02, 0x1C, 0x00, 0x10, 0x00, 0x08, 0x65, 0x80, 0x84, 0x20, 0x00, 0x22, 0x25,
 	0x00, 0x83, 0x0C, 0x80, 0x10, 0x00, 0x00, 0xA0, 0x80, 0x01, 0x80, 0x80, 0x00, 0x01, 0x02, 0x2D
 };
 const char snes_pf94_10k_header[] = {
@@ -573,4 +574,20 @@ void snes_poll(void)
 	{
 		DisableIO();
 	}
+}
+
+char is_snes()
+{
+	static int is_snes_type = 0;
+	if (!is_snes_type && user_io_get_core_name(1)[0]) is_snes_type = strcasecmp(user_io_get_core_name(1), "SNES") ? 2 : 1;
+	if (is_snes_type == 1) core_poll = snes_poll;
+	return (is_snes_type == 1);
+}
+
+char is_sgb()
+{
+	static int is_sgb_type = 0;
+	if (!is_sgb_type && user_io_get_core_name(1)[0]) is_sgb_type = strcasecmp(user_io_get_core_name(1), "SGB") ? 2 : 1;
+	if (is_sgb_type == 1) core_poll = snes_poll;
+	return (is_sgb_type == 1);
 }

@@ -250,8 +250,9 @@ void pcfx_poll()
 }
 
 // Only the CD slot is served here; the save slots are plain files.
-int pcfx_sd_service(int disk, int op, uint32_t lba, int sz, int ack)
+int pcfx_sd_service(int disk, fileTYPE *, int op, uint64_t lba, int sz, int ack)
 {
+	lba = (uint32_t)lba;
 	if (!is_pcfx()) return 0;
 	if (disk != PCFX_SLOT_CD) quiet_at = GetTimer(100);
 	if (disk != PCFX_SLOT_CD) return 0;
@@ -268,4 +269,19 @@ int pcfx_sd_service(int disk, int op, uint32_t lba, int sz, int ack)
 
 	pcfx_cd_read_ahead(lba + sz / PCFX_CD_BLOCK);
 	return 1;
+}
+
+char is_pcfx()
+{
+	static int is_pcfx_type = 0;
+	if (!is_pcfx_type)
+	{
+		is_pcfx_type = strcasecmp(user_io_get_core_name(1), "PCFX") ? 2 : 1;
+		if (is_pcfx_type == 1)
+		{
+			sd_service = pcfx_sd_service;
+			core_poll = pcfx_poll;
+		}
+	}
+	return (is_pcfx_type == 1);
 }
